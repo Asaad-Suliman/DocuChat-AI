@@ -29,6 +29,8 @@ uploads/
 *.pdf
 *.docx
 *.txt
+# ...but the dependency list is code, not user data
+!requirements.txt
 
 # OS files
 .DS_Store
