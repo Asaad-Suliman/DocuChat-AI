@@ -1,9 +1,10 @@
 import os
 import time
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
+# LangChain 1.0 moved the legacy chains and memory classes into langchain-classic.
+from langchain_classic.chains import ConversationalRetrievalChain
+from langchain_classic.memory import ConversationBufferMemory
 from config import MODEL, OPENAI_API_KEY
 
 
@@ -58,7 +59,7 @@ class RAGPipeline:
         if not self.vectorstore:
             return ""
         retriever = self.vectorstore.as_retriever()
-        docs = retriever.get_relevant_documents(query)
+        docs = retriever.invoke(query)
         return "\n\n".join([doc.page_content for doc in docs[:top_k]])
 
     def stream_response(self, message, chat_history):

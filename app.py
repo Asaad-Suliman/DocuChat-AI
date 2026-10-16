@@ -7,7 +7,56 @@ from rag_pipeline import RAGPipeline
 pipeline = RAGPipeline()
 
 
+# --- Chat history format ---
+# Gradio 6 removed the old "tuples" history format: the Chatbot now sends and
+# expects a list of {"role": ..., "content": ...} messages. The handlers below
+# still work with (user, assistant) pairs, so these two helpers convert at the
+# boundary between the UI and the handlers.
+
+def _text(content):
+    """Return the plain text of a message's content (a string or a list of parts)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            part.get("text", "") if isinstance(part, dict) else str(part) for part in content
+        )
+    return "" if content is None else str(content)
+
+
+def to_pairs(messages):
+    """Convert Gradio messages into (user, assistant) pairs."""
+    pairs = []
+    for msg in messages or []:
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        content = _text(msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", ""))
+        if role == "user":
+            pairs.append((content, ""))
+        elif pairs and pairs[-1][0] is not None and pairs[-1][1] == "":
+            pairs[-1] = (pairs[-1][0], content)
+        else:
+            pairs.append((None, content))
+    return pairs
+
+
+def to_messages(pairs):
+    """Convert (user, assistant) pairs back into Gradio messages."""
+    messages = []
+    for user, assistant in pairs:
+        if user is not None:
+            messages.append({"role": "user", "content": user})
+        if assistant:
+            messages.append({"role": "assistant", "content": assistant})
+    return messages
+
+
 def process_and_respond(message, chat_history, files):
+    """Gradio entry point: converts the history, then streams the handler's updates."""
+    for text, pairs in _process_and_respond_pairs(message, to_pairs(chat_history), files):
+        yield text, to_messages(pairs)
+
+
+def _process_and_respond_pairs(message, chat_history, files):
     """
     Main handler for all user interactions.
     Handles file uploads, document processing, and chat responses.
@@ -105,8 +154,9 @@ def process_and_respond(message, chat_history, files):
 def reset_pipeline(chat_history):
     """Reset all documents and notify the user in chat."""
     pipeline.reset()
+    chat_history = to_pairs(chat_history)
     chat_history.append((None, "🔄 Knowledge base reset. All documents cleared."))
-    return chat_history
+    return to_messages(chat_history)
 
 
 def refresh_file_list():
@@ -114,15 +164,14 @@ def refresh_file_list():
 
 
 # --- Gradio UI ---
-with gr.Blocks(title="DocuChat AI", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="DocuChat AI") as demo:
     gr.Markdown("# 💬 DocuChat AI")
     gr.Markdown("Upload PDF, DOCX, or TXT files and chat with your documents using RAG.")
 
     chatbot = gr.Chatbot(
         label="Chat",
         height=500,
-        show_copy_button=True,
-        type="tuples"
+        buttons=["copy"],
     )
 
     with gr.Row():
@@ -170,4 +219,4 @@ with gr.Blocks(title="DocuChat AI", theme=gr.themes.Soft()) as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(inbrowser=True)
+    demo.launch(inbrowser=True, theme=gr.themes.Soft())
