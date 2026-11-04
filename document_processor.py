@@ -1,7 +1,7 @@
 import os
 import time
 from langchain_community.document_loaders import PyPDFLoader, UnstructuredWordDocumentLoader, TextLoader
-from langchain.text_splitter import CharacterTextSplitter
+from langchain_text_splitters import CharacterTextSplitter
 from langchain_openai import ChatOpenAI
 from config import MODEL, OPENAI_API_KEY, CHUNK_SIZE, CHUNK_OVERLAP
 
@@ -79,4 +79,10 @@ Generate the bullet points now."""
         for chunk in llm.stream(prompt):
             if hasattr(chunk, "content"):
                 summary_text += chunk.content
-                yield
+                yield summary_text
+                time.sleep(0.02)  # small delay for a natural reading pace
+
+        yield summary_text + "\n"
+
+    except Exception as e:
+        yield f"⚠️ Could not generate summary for {filename}: {str(e)}"
