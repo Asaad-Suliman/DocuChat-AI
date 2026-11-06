@@ -2,6 +2,7 @@ import os
 import gradio as gr
 from document_processor import load_document, chunk_documents, generate_summary_streaming
 from rag_pipeline import RAGPipeline
+from config import MissingKeyError, NO_KEY_MESSAGE, redact
 
 # Single shared pipeline instance for the app session
 pipeline = RAGPipeline()
@@ -50,18 +51,34 @@ def to_messages(pairs):
     return messages
 
 
-def process_and_respond(message, chat_history, files):
+def process_and_respond(message, chat_history, files, api_key=""):
     """Gradio entry point: converts the history, then streams the handler's updates."""
-    for text, pairs in _process_and_respond_pairs(message, to_pairs(chat_history), files):
+    for text, pairs in _process_and_respond_pairs(message, to_pairs(chat_history), files, api_key):
         yield text, to_messages(pairs)
 
 
-def _process_and_respond_pairs(message, chat_history, files):
+def _process_and_respond_pairs(message, chat_history, files, api_key=""):
     """
     Main handler for all user interactions.
     Handles file uploads, document processing, and chat responses.
     """
     global pipeline
+
+    if not files and not (message and message.strip()):
+        return
+
+    # The key typed in the UI is kept in memory only. It is never logged or saved.
+    try:
+        pipeline.set_api_key(api_key)
+        pipeline.settings()
+    except MissingKeyError:
+        chat_history.append((message.strip() if message and message.strip() else "📎 Files", NO_KEY_MESSAGE))
+        yield "", chat_history
+        return
+    except Exception as e:
+        chat_history.append((message or "📎 Files", f"❌ Error: {redact(str(e), pipeline.api_key)}"))
+        yield "", chat_history
+        return
 
     # --- Handle file uploads ---
     if files:
@@ -100,7 +117,7 @@ def _process_and_respond_pairs(message, chat_history, files):
                 continue
 
             # Stream the summary into chat
-            for summary in generate_summary_streaming(docs, filename):
+            for summary in generate_summary_streaming(docs, filename, pipeline.api_key):
                 all_content = processing_msg
                 for prev in successfully_processed:
                     all_content += f"📄 **{prev}** ✓\n\n"
@@ -129,7 +146,7 @@ def _process_and_respond_pairs(message, chat_history, files):
                 for _, updated_history in pipeline.stream_response(message, chat_history):
                     yield "", updated_history
             except Exception as e:
-                chat_history[-1] = (message, f"❌ Error: {str(e)}")
+                chat_history[-1] = (message, f"❌ Error: {redact(str(e), pipeline.api_key)}")
                 yield "", chat_history
 
         return
@@ -147,16 +164,16 @@ def _process_and_respond_pairs(message, chat_history, files):
                 for _, updated_history in pipeline.stream_direct_response(message, chat_history):
                     yield "", updated_history
         except Exception as e:
-            chat_history[-1] = (message, f"❌ Error: {str(e)}")
+            chat_history[-1] = (message, f"❌ Error: {redact(str(e), pipeline.api_key)}")
             yield "", chat_history
 
 
 def reset_pipeline(chat_history):
-    """Reset all documents and notify the user in chat."""
+    """Reset all documents (and the pasted key) and notify the user in chat."""
     pipeline.reset()
     chat_history = to_pairs(chat_history)
     chat_history.append((None, "🔄 Knowledge base reset. All documents cleared."))
-    return to_messages(chat_history)
+    return to_messages(chat_history), ""
 
 
 def refresh_file_list():
@@ -167,6 +184,14 @@ def refresh_file_list():
 with gr.Blocks(title="DocuChat AI") as demo:
     gr.Markdown("# 💬 DocuChat AI")
     gr.Markdown("Upload PDF, DOCX, or TXT files and chat with your documents using RAG.")
+
+    api_key_box = gr.Textbox(
+        label="API key (optional)",
+        type="password",
+        max_lines=1,
+        placeholder="Leave empty to use OPENROUTER_API_KEY / OPENAI_API_KEY from .env",
+        info="Used for this session only, kept in memory. Never logged or saved.",
+    )
 
     chatbot = gr.Chatbot(
         label="Chat",
@@ -199,12 +224,12 @@ with gr.Blocks(title="DocuChat AI") as demo:
     # Event bindings
     submit_btn.click(
         process_and_respond,
-        inputs=[msg, chatbot, file_upload],
+        inputs=[msg, chatbot, file_upload, api_key_box],
         outputs=[msg, chatbot]
     )
     msg.submit(
         process_and_respond,
-        inputs=[msg, chatbot, file_upload],
+        inputs=[msg, chatbot, file_upload, api_key_box],
         outputs=[msg, chatbot]
     )
     submit_btn.click(lambda: None, None, file_upload)
@@ -213,7 +238,7 @@ with gr.Blocks(title="DocuChat AI") as demo:
     clear_btn.click(lambda: [], None, chatbot)
     clear_btn.click(lambda: "", None, msg)
 
-    reset_btn.click(reset_pipeline, inputs=[chatbot], outputs=[chatbot])
+    reset_btn.click(reset_pipeline, inputs=[chatbot], outputs=[chatbot, api_key_box])
     refresh_btn.click(refresh_file_list, outputs=files_display)
     demo.load(refresh_file_list, outputs=files_display)
 
