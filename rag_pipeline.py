@@ -1,11 +1,10 @@
 import os
 import time
 from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 # LangChain 1.0 moved the legacy chains and memory classes into langchain-classic.
 from langchain_classic.chains import ConversationalRetrievalChain
 from langchain_classic.memory import ConversationBufferMemory
-from config import MODEL, OPENAI_API_KEY
+from config import get_chat_model, get_embeddings, resolve_llm_settings
 
 
 class RAGPipeline:
@@ -15,7 +14,8 @@ class RAGPipeline:
     """
 
     def __init__(self):
-        self.embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+        # Key pasted in the UI. Memory only: never logged, never written to disk.
+        self.api_key = ""
         self.memory = ConversationBufferMemory(
             memory_key="chat_history",
             return_messages=True
@@ -24,6 +24,28 @@ class RAGPipeline:
         self.conversation_chain = None
         self.processed_files = []
         self.all_chunks = []
+
+    def settings(self):
+        """Provider settings for the current key. Raises MissingKeyError if there is none."""
+        return resolve_llm_settings(self.api_key)
+
+    def set_api_key(self, key):
+        """Use a key pasted in the UI. Re-embeds loaded chunks if the key changed."""
+        key = (key or "").strip()
+        if key == self.api_key:
+            return
+        self.api_key = key
+        if self.all_chunks:
+            self.vectorstore = Chroma.from_documents(self.all_chunks, get_embeddings(self.settings()))
+            self._build_chain()
+
+    def _build_chain(self):
+        llm = get_chat_model(self.settings(), temperature=0.7)
+        self.conversation_chain = ConversationalRetrievalChain.from_llm(
+            llm,
+            retriever=self.vectorstore.as_retriever(),
+            memory=self.memory
+        )
 
     def add_documents(self, chunks, filename):
         """
@@ -34,21 +56,12 @@ class RAGPipeline:
         self.processed_files.append(filename)
 
         if self.vectorstore is None:
-            self.vectorstore = Chroma.from_documents(self.all_chunks, self.embeddings)
+            self.vectorstore = Chroma.from_documents(self.all_chunks, get_embeddings(self.settings()))
         else:
             self.vectorstore.add_documents(chunks)
 
         # Rebuild the conversation chain with the updated vectorstore
-        llm = ChatOpenAI(
-            temperature=0.7,
-            model_name=MODEL,
-            openai_api_key=OPENAI_API_KEY
-        )
-        self.conversation_chain = ConversationalRetrievalChain.from_llm(
-            llm,
-            retriever=self.vectorstore.as_retriever(),
-            memory=self.memory
-        )
+        self._build_chain()
 
     def is_ready(self):
         """Returns True if documents have been loaded and the chain is ready."""
@@ -87,12 +100,7 @@ User question: {message}
 
 Provide a clear, accurate answer based on the document context."""
 
-        llm = ChatOpenAI(
-            temperature=0.7,
-            model_name=MODEL,
-            openai_api_key=OPENAI_API_KEY,
-            streaming=True
-        )
+        llm = get_chat_model(self.settings(), temperature=0.7, streaming=True)
 
         full_response = ""
         for chunk in llm.stream(prompt):
@@ -106,12 +114,7 @@ Provide a clear, accurate answer based on the document context."""
         """
         Stream a direct LLM response when no documents are loaded.
         """
-        llm = ChatOpenAI(
-            temperature=0.7,
-            model_name=MODEL,
-            openai_api_key=OPENAI_API_KEY,
-            streaming=True
-        )
+        llm = get_chat_model(self.settings(), temperature=0.7, streaming=True)
 
         full_response = ""
         for chunk in llm.stream(message):
@@ -127,6 +130,7 @@ Provide a clear, accurate answer based on the document context."""
         self.conversation_chain = None
         self.processed_files = []
         self.all_chunks = []
+        self.api_key = ""
         self.memory.clear()
 
     def get_processed_files(self):

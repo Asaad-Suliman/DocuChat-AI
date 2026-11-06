@@ -2,8 +2,7 @@ import os
 import time
 from langchain_community.document_loaders import PyPDFLoader, UnstructuredWordDocumentLoader, TextLoader
 from langchain_text_splitters import CharacterTextSplitter
-from langchain_openai import ChatOpenAI
-from config import MODEL, OPENAI_API_KEY, CHUNK_SIZE, CHUNK_OVERLAP
+from config import CHUNK_SIZE, CHUNK_OVERLAP, get_chat_model, redact, resolve_llm_settings
 
 
 def load_document(file_path):
@@ -41,7 +40,7 @@ def chunk_documents(docs):
     return splitter.split_documents(docs)
 
 
-def generate_summary_streaming(docs, filename):
+def generate_summary_streaming(docs, filename, api_key=""):
     """
     Stream a bullet-point summary of a document using GPT.
     Yields partial strings as the model generates them (for live UI updates).
@@ -52,12 +51,7 @@ def generate_summary_streaming(docs, filename):
         if len(combined_text) > 8000:
             combined_text = combined_text[:8000]
 
-        llm = ChatOpenAI(
-            temperature=0.3,
-            model_name=MODEL,
-            openai_api_key=OPENAI_API_KEY,
-            streaming=True
-        )
+        llm = get_chat_model(resolve_llm_settings(api_key), temperature=0.3, streaming=True)
 
         prompt = f"""You are an expert document analyst. Read the document below and extract the 3-5 most important points.
 
@@ -85,4 +79,4 @@ Generate the bullet points now."""
         yield summary_text + "\n"
 
     except Exception as e:
-        yield f"⚠️ Could not generate summary for {filename}: {str(e)}"
+        yield f"⚠️ Could not generate summary for {filename}: {redact(str(e), api_key)}"
