@@ -52,13 +52,13 @@ class RAGPipeline:
         Add new document chunks to the vectorstore.
         Creates the vectorstore on first call, updates it on subsequent calls.
         """
-        self.all_chunks.extend(chunks)
-        self.processed_files.append(filename)
-
+        # Embed first: if it fails, the file must not count as processed.
         if self.vectorstore is None:
-            self.vectorstore = Chroma.from_documents(self.all_chunks, get_embeddings(self.settings()))
+            self.vectorstore = Chroma.from_documents(self.all_chunks + chunks, get_embeddings(self.settings()))
         else:
             self.vectorstore.add_documents(chunks)
+        self.all_chunks.extend(chunks)
+        self.processed_files.append(filename)
 
         # Rebuild the conversation chain with the updated vectorstore
         self._build_chain()

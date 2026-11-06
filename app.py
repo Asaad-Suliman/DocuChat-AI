@@ -126,13 +126,18 @@ def _process_and_respond_pairs(message, chat_history, files, api_key=""):
                 yield "", chat_history
 
             # Add to pipeline
-            chunks = chunk_documents(docs)
-            pipeline.add_documents(chunks, filename)
+            try:
+                chunks = chunk_documents(docs)
+                pipeline.add_documents(chunks, filename)
+            except Exception as e:
+                errors.append(f"❌ {filename}: {redact(str(e), pipeline.api_key)}")
+                continue
             successfully_processed.append(filename)
 
         # Final status message
         final = chat_history[-1][1]
-        final += "\n---\n\n💬 **Ready! Ask me anything about your documents.**"
+        if pipeline.is_ready():
+            final += "\n---\n\n💬 **Ready! Ask me anything about your documents.**"
         if errors:
             final += "\n\n⚠️ **Errors:**\n" + "\n".join(errors)
         chat_history[-1] = (None, final)
